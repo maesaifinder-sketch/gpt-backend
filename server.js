@@ -1,44 +1,153 @@
-﻿import express from "express";
-import cors from "cors";
-import dotenv from "dotenv";
-import OpenAI from "openai";
+﻿/**
+ * server.js (ไฟล์เดียวจบ) — Express + Multer (รับรูป 2 รูป) + OpenAI Responses API
+ *
+ * ✅ รองรับ:
+ * - POST /api/generate-gpt-prompt (multipart/form-data)
+ *   fields:
+ *     - soraPrompt (string)  [required]
+ *     - img1 (file)         [optional] รูปสินค้า
+ *     - img2 (file)         [optional] รูปรายละเอียดสินค้า
+ * - GET /health
+ *
+ * ✅ Deploy บน Render ได้ทันที
+ * ✅ CORS ล็อกโดเมน GitHub Pages ของคุณ
+ *
+ * ----------------------------
+ * ติดตั้ง:
+ *   npm i express cors multer openai
+ *
+ * package.json ต้องมี:
+ *   "type": "module"
+ *   "scripts": { "start": "node server.js" }
+ *
+ * Render Env Vars:
+ *   OPENAI_API_KEY=sk-...
+ *   (Render ตั้ง PORT ให้เอง)
+ */
 
-dotenv.config();
+import express from "express";
+import cors from "cors";
+import multer from "multer";
+import OpenAI from "openai";
 
 const app = express();
 
-/** ✅ CORS: อนุญาตทุก origin ก่อน (ง่ายสุด)
- *  ถ้าจะล็อกโดเมนทีหลัง ผมปรับให้ได้
+/** =========================
+ * CORS (ล็อก origin ให้ตรงเว็บคุณ)
+ * =========================
+ * ถ้าคุณมีโดเมนอื่นเพิ่ม ให้ใส่เพิ่มใน array ได้
  */
+const ALLOWED_ORIGINS = [
+  "https://maesaifinder-sketch.github.io",
+];
+
 app.use(cors({
-  origin: [
-    "https://maesaifinder-sketch.github.io"
-  ],
+  origin(origin, cb){
+    // allow same-origin / curl / server-to-server
+    if (!origin) return cb(null, true);
+    if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
+    return cb(new Error(`CORS blocked for origin: ${origin}`));
+  },
   methods: ["GET", "POST", "OPTIONS"],
-  allowedHeaders: ["Content-Type", "Authorization"]
+  allowedHeaders: ["Content-Type", "Authorization"],
 }));
 app.options("*", cors());
-app.use(express.json({ limit: "1mb" }));
 
+/** =========================
+ * Multer (รับไฟล์เป็น memory)
+ * ========================= */
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB ต่อไฟล์
+  },
+});
+
+/** =========================
+ * OpenAI Client
+ * ========================= */
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
 
+/** =========================
+ * Utils
+ * ========================= */
+const sleep = (ms) => new Promise(r => setTimeout(r, ms));
+
+async function callOpenAIWithRetry(makeCall, retries = 2){
+  let lastErr;
+  for(let i=0;i<=retries;i++){
+    try{
+      return await makeCall();
+    }catch(err){
+      lastErr = err;
+      const status = err?.status || err?.response?.status;
+
+      // Retry เฉพาะ 429 แบบสุภาพ
+      if(status === 429 && i < retries){
+        const wait = 1000 * Math.pow(2, i); // 1s, 2s, 4s...
+        await sleep(wait);
+        continue;
+      }
+      throw err;
+    }
+  }
+  throw lastErr;
+}
+
+function shortFileInfo(f){
+  if(!f) return null;
+  return {
+    fieldname: f.fieldname,
+    originalname: f.originalname,
+    mimetype: f.mimetype,
+    size: f.size
+  };
+}
+
+/** =========================
+ * Routes
+ * ========================= */
 app.get("/health", (req, res) => {
   res.json({ ok: true, service: "prompt-backend" });
 });
 
-app.post("/api/generate-gpt-prompt", async (req, res) => {
-  try {
-    const soraPrompt = String(req.body?.soraPrompt || "").trim();
-    if (!soraPrompt) {
-      return res.status(400).json({ success: false, error: "Missing soraPrompt" });
-    }
-    if (!process.env.OPENAI_API_KEY) {
-      return res.status(500).json({ success: false, error: "Missing OPENAI_API_KEY" });
-    }
+/**
+ * POST /api/generate-gpt-prompt
+ * multipart/form-data:
+ *   - soraPrompt: string (required)
+ *   - img1: file (optional)
+ *   - img2: file (optional)
+ */
+app.post(
+  "/api/generate-gpt-prompt",
+  upload.fields([
+    { name: "img1", maxCount: 1 },
+    { name: "img2", maxCount: 1 },
+  ]),
+  async (req, res) => {
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ success: false, error: "Missing OPENAI_API_KEY" });
+      }
 
-    const system = `
-คุณคือผู้ช่วยสร้าง "GPT Prompt" สำหรับใช้ผลิตสคริปต์/พรมต์วิดีโอ UGC แบบมืออาชีพ
-เป้าหมาย: แปลงข้อมูลจาก Sora Prompt ให้เป็น "GPT Prompt" ที่ชัดเจน เป็นขั้นตอน และใช้งานได้ทันที
+      const soraPrompt = String(req.body?.soraPrompt || "").trim();
+      if (!soraPrompt) {
+        return res.status(400).json({ success: false, error: "Missing soraPrompt" });
+      }
+
+      const img1 = req.files?.img1?.[0] || null;
+      const img2 = req.files?.img2?.[0] || null;
+
+      // ตอนนี้ยังไม่ส่งรูปไปให้โมเดล (Vision) — แค่รับไว้ก่อน
+      // คุณสามารถต่อยอดให้ส่งรูปเข้า Vision ได้ภายหลัง
+      const imgSummary = {
+        img1: shortFileInfo(img1),
+        img2: shortFileInfo(img2),
+      };
+
+      const system = `
+คุณคือผู้ช่วยสร้าง "GPT Prompt" สำหรับใช้ผลิตสคริปต์/พรมต์วิดีโอโฆษณา UGC แบบมืออาชีพ
+เป้าหมาย: แปลงข้อมูลจาก Sora Prompt + ข้อมูลรูปอ้างอิง (ถ้ามี) ให้เป็น "GPT Prompt" ที่ชัดเจน เป็นขั้นตอน และใช้งานได้ทันที
 
 ข้อกำหนดเอาต์พุต:
 - ตอบกลับเป็นข้อความล้วน (plain text)
@@ -46,39 +155,66 @@ app.post("/api/generate-gpt-prompt", async (req, res) => {
 - จัดรูปแบบเป็นหัวข้อสั้นๆ + bullet
 - ต้องมีส่วน: OBJECTIVE, INPUTS, CONSTRAINTS, OUTPUT FORMAT, CHECKLIST
 - ภาษาไทยล้วน อ่านง่าย
-    `.trim();
+      `.trim();
 
-    const user = `
+      const user = `
 นี่คือ Sora Prompt ต้นทาง:
 ---
 ${soraPrompt}
 ---
 
-โปรดสร้าง "GPT Prompt" ที่เหมาะสำหรับนำไปให้ GPT สร้างสคริปต์/พรมต์ต่อได้ทันที
-    `.trim();
+ข้อมูลรูปอ้างอิงที่ผู้ใช้อัปโหลด (ยังไม่ได้วิเคราะห์ภาพด้วย Vision):
+- รูปที่ 1 (img1): ${img1 ? `${img1.originalname} (${img1.mimetype}, ${img1.size} bytes)` : "ไม่ได้แนบ"}
+- รูปที่ 2 (img2): ${img2 ? `${img2.originalname} (${img2.mimetype}, ${img2.size} bytes)` : "ไม่ได้แนบ"}
 
-    const response = await client.responses.create({
-      model: "gpt-4.1-mini",
-      input: [
-        { role: "system", content: system },
-        { role: "user", content: user }
-      ],
-      temperature: 0.3,
-      max_output_tokens: 1200
-    });
+โปรดสร้าง "GPT Prompt" ที่เหมาะสำหรับนำไปให้ GPT/AI สร้างสคริปต์/พรมต์ต่อได้ทันที
+      `.trim();
 
-    const promptText = (response.output_text || "").trim();
-    if (!promptText) {
-      return res.status(502).json({ success: false, error: "Empty response from model" });
+      const response = await callOpenAIWithRetry(() =>
+        client.responses.create({
+          model: "gpt-4.1-mini",
+          input: [
+            { role: "system", content: system },
+            { role: "user", content: user }
+          ],
+          temperature: 0.3,
+          max_output_tokens: 1200,
+        })
+      );
+
+      const promptText = (response.output_text || "").trim();
+      if (!promptText) {
+        return res.status(502).json({ success: false, error: "Empty response from model" });
+      }
+
+      return res.json({
+        success: true,
+        prompt: promptText,
+        meta: {
+          receivedImages: imgSummary
+        }
+      });
+
+    } catch (err) {
+      console.error("generate-gpt-prompt error:", err);
+
+      const status = err?.status || err?.response?.status || 500;
+
+      // ทำข้อความ error ให้เข้าใจง่าย
+      let message = err?.message || "Server error";
+      if (status === 429) {
+        message = "OpenAI rate limit / quota reached (HTTP 429). Please wait or check billing/usage limits.";
+      }
+
+      return res.status(status).json({ success: false, error: message });
     }
-
-    res.json({ success: true, prompt: promptText });
-  } catch (err) {
-    console.error(err);
-    res.status(err?.status || 500).json({ success: false, error: err?.message || "Server error" });
   }
-});
+);
 
+/** =========================
+ * Start
+ * ========================= */
 const port = Number(process.env.PORT || 3000);
-app.listen(port, () => console.log(`✅ Running on port ${port}`));
-
+app.listen(port, () => {
+  console.log(`✅ Backend running on port ${port}`);
+});
