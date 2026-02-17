@@ -146,15 +146,17 @@ app.post(
       };
 
       const system = `
-คุณคือผู้ช่วยสร้าง "GPT Prompt" สำหรับใช้ผลิตสคริปต์/พรมต์วิดีโอโฆษณา UGC แบบมืออาชีพ
-เป้าหมาย: แปลงข้อมูลจาก Sora Prompt + ข้อมูลรูปอ้างอิง (ถ้ามี) ให้เป็น "GPT Prompt" ที่ชัดเจน เป็นขั้นตอน และใช้งานได้ทันที
+คุณคือผู้เชี่ยวชาญด้านการเขียน Prompt สำหรับ Sora AI (Video Generation)
+หน้าที่ของคุณคือแปลงข้อมูลทั้งหมดให้เป็น Prompt สำหรับสร้างวิดีโอใน Sora โดยตรง
 
-ข้อกำหนดเอาต์พุต:
-- ตอบกลับเป็นข้อความล้วน (plain text)
-- ห้ามใส่โค้ดบล็อก
-- จัดรูปแบบเป็นหัวข้อสั้นๆ + bullet
-- ต้องมีส่วน: OBJECTIVE, INPUTS, CONSTRAINTS, OUTPUT FORMAT, CHECKLIST
-- ภาษาไทยล้วน อ่านง่าย
+ข้อกำหนด:
+- เขียนเป็นคำบรรยายฉากแบบภาพยนตร์
+- แบ่งเป็น Scene 1, Scene 2, Scene 3, Scene 4
+- ระบุ: สัดส่วนวิดีโอ, โทนภาพ, แสง, กล้อง, อารมณ์
+- ห้ามใช้รูปแบบ OBJECTIVE, INPUTS, CONSTRAINTS
+- ห้ามเขียน checklist
+- ใช้ภาษาอังกฤษสำหรับคำบรรยายฉาก (Sora เข้าใจดีที่สุด)
+- ผลลัพธ์ต้องเป็น Prompt พร้อมนำไปวางใน Sora ได้ทันที
       `.trim();
 
       const user = `
@@ -218,3 +220,4 @@ const port = Number(process.env.PORT || 3000);
 app.listen(port, () => {
   console.log(`✅ Backend running on port ${port}`);
 });
+
