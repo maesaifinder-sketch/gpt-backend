@@ -108,7 +108,7 @@ function shortFileInfo(f){
  * Routes
  * ========================= */
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "prompt-backend" });
+  res.json({ ok: true, service: "prompt-backend", version: "v2-multer-20260217" });
 });
 
 /**
