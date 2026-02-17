@@ -1,25 +1,33 @@
 /**
- * server.js — Express + Multer + OpenAI
+ * server.js (ไฟล์เดียวจบ) — Express + Multer + OpenAI
  *
- * ✅ Endpoints:
- * - GET  /health
+ * ✅ รองรับทั้ง “งาน” และ “ภาพ”
  * - POST /api/generate-gpt-prompt (multipart/form-data)
- *    fields: soraPrompt (required), img1(optional), img2(optional)
+ *    fields:
+ *      - soraPrompt (string) [required]
+ *      - img1 (file) [optional]
+ *      - img2 (file) [optional]
+ *
  * - POST /api/generate-image (multipart/form-data)
- *    fields: soraPrompt (required), img1(required)
+ *    fields:
+ *      - soraPrompt (string) [required]
+ *      - img1 (file) [required]  // ใช้รูปสินค้าอย่างเดียว
+ *    ✅ ตั้ง size เป็น 1024x1792 (9:16)
+ *    ✅ ส่งกลับ base64: { success:true, mime:"image/png", b64:"..." }
  *
- * ✅ Deploy on Render
- * ✅ CORS locked to your GitHub Pages domain
+ * - GET /health
  *
- * Install:
+ * ----------------------------
+ * ติดตั้ง:
  *   npm i express cors multer openai
  *
- * package.json:
- *   "type":"module"
- *   "scripts": { "start":"node server.js" }
+ * package.json ต้องมี:
+ *   "type": "module"
+ *   "scripts": { "start": "node server.js" }
  *
- * Render Env:
+ * Render Env Vars:
  *   OPENAI_API_KEY=sk-...
+ *   (Render ตั้ง PORT ให้เอง)
  */
 
 import express from "express";
@@ -30,14 +38,17 @@ import OpenAI from "openai";
 const app = express();
 
 /** =========================
- * CORS
+ * CORS (ล็อก origin ให้ตรงเว็บคุณ)
  * ========================= */
 const ALLOWED_ORIGINS = [
   "https://maesaifinder-sketch.github.io",
+  // ถ้ามีโดเมนอื่น เพิ่มได้ เช่น:
+  // "http://localhost:5500",
 ];
 
 app.use(cors({
   origin(origin, cb){
+    // allow same-origin / curl / server-to-server
     if (!origin) return cb(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS blocked for origin: ${origin}`));
@@ -48,11 +59,13 @@ app.use(cors({
 app.options("*", cors());
 
 /** =========================
- * Multer (memory)
+ * Multer (รับไฟล์เป็น memory)
  * ========================= */
 const upload = multer({
   storage: multer.memoryStorage(),
-  limits: { fileSize: 5 * 1024 * 1024 }, // 5MB
+  limits: {
+    fileSize: 5 * 1024 * 1024, // 5MB ต่อไฟล์
+  },
 });
 
 /** =========================
@@ -73,8 +86,11 @@ async function callOpenAIWithRetry(makeCall, retries = 2){
     }catch(err){
       lastErr = err;
       const status = err?.status || err?.response?.status;
+
+      // Retry เฉพาะ 429 แบบสุภาพ
       if(status === 429 && i < retries){
-        await sleep(1000 * Math.pow(2, i)); // 1s,2s,4s
+        const wait = 1000 * Math.pow(2, i); // 1s, 2s, 4s...
+        await sleep(wait);
         continue;
       }
       throw err;
@@ -94,7 +110,7 @@ function shortFileInfo(f){
 }
 
 function fileToDataUrl(file){
-  if(!file) return null;
+  // ใช้กับ Vision input_image
   const b64 = file.buffer.toString("base64");
   return `data:${file.mimetype};base64,${b64}`;
 }
@@ -103,30 +119,28 @@ function fileToDataUrl(file){
  * Routes
  * ========================= */
 app.get("/health", (req, res) => {
-  res.json({ ok:true, service:"prompt-backend", version:"all-in-one-v3" });
+  res.json({ ok: true, service: "prompt-backend", version: "v3-all-in-one" });
 });
 
 /**
  * POST /api/generate-gpt-prompt
- * multipart/form-data:
- * - soraPrompt (required)
- * - img1 (optional)
- * - img2 (optional)
- *
- * ✅ “งาน”: แปลง prompt เป็น Sora-ready video prompt (Scene 1-4)
+ * (เมนู “งาน”) แปลง soraPrompt -> Sora video prompt แบบ Scene 1-4
  */
 app.post(
   "/api/generate-gpt-prompt",
-  upload.fields([{ name:"img1", maxCount:1 }, { name:"img2", maxCount:1 }]),
+  upload.fields([
+    { name: "img1", maxCount: 1 },
+    { name: "img2", maxCount: 1 },
+  ]),
   async (req, res) => {
-    try{
-      if(!process.env.OPENAI_API_KEY){
-        return res.status(500).json({ success:false, error:"Missing OPENAI_API_KEY" });
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ success: false, error: "Missing OPENAI_API_KEY" });
       }
 
       const soraPrompt = String(req.body?.soraPrompt || "").trim();
-      if(!soraPrompt){
-        return res.status(400).json({ success:false, error:"Missing soraPrompt" });
+      if (!soraPrompt) {
+        return res.status(400).json({ success: false, error: "Missing soraPrompt" });
       }
 
       const img1 = req.files?.img1?.[0] || null;
@@ -139,13 +153,13 @@ app.post(
 
       const system = `
 You are an expert prompt engineer for Sora AI (video generation).
-Convert the user's request into a single Sora-ready VIDEO prompt.
+Convert the user's request into ONE Sora-ready VIDEO prompt.
 
 Rules:
 - Output must be directly usable in Sora
-- Use Scene 1, Scene 2, Scene 3, Scene 4
+- Use: Scene 1, Scene 2, Scene 3, Scene 4
 - Include: aspect ratio, camera, lighting, mood, motion
-- Do NOT use OBJECTIVE/INPUTS/CONSTRAINTS/CHECKLIST format
+- Do NOT use OBJECTIVE/INPUTS/CONSTRAINTS/CHECKLIST
 - Write in English (best for Sora)
       `.trim();
 
@@ -155,7 +169,7 @@ User request (source prompt):
 ${soraPrompt}
 ---
 
-Uploaded refs (not required to analyze):
+Uploaded refs (optional):
 - img1: ${img1 ? img1.originalname : "none"}
 - img2: ${img2 ? img2.originalname : "none"}
 
@@ -166,8 +180,8 @@ Generate the final Sora-ready video prompt.
         client.responses.create({
           model: "gpt-4.1-mini",
           input: [
-            { role:"system", content: system },
-            { role:"user", content: user }
+            { role: "system", content: system },
+            { role: "user", content: user }
           ],
           temperature: 0.3,
           max_output_tokens: 1200,
@@ -175,52 +189,59 @@ Generate the final Sora-ready video prompt.
       );
 
       const promptText = (response.output_text || "").trim();
-      if(!promptText){
-        return res.status(502).json({ success:false, error:"Empty response from model" });
+      if (!promptText) {
+        return res.status(502).json({ success: false, error: "Empty response from model" });
       }
 
-      return res.json({ success:true, prompt: promptText, meta:{ receivedImages: imgSummary } });
-    }catch(err){
+      return res.json({
+        success: true,
+        prompt: promptText,
+        meta: { receivedImages: imgSummary }
+      });
+
+    } catch (err) {
       console.error("generate-gpt-prompt error:", err);
+
       const status = err?.status || err?.response?.status || 500;
       let message = err?.message || "Server error";
-      if(status === 429) message = "OpenAI rate limit / quota reached (HTTP 429). Check billing/limits.";
-      return res.status(status).json({ success:false, error: message });
+      if (status === 429) {
+        message = "OpenAI rate limit / quota reached (HTTP 429). Please wait or check billing/usage limits.";
+      }
+
+      return res.status(status).json({ success: false, error: message });
     }
   }
 );
 
 /**
  * POST /api/generate-image
- * multipart/form-data:
- * - soraPrompt (required)
- * - img1 (required)  ✅ ใช้เฉพาะรูปสินค้า
+ * (เมนู “ภาพ”) ใช้ img1 (สินค้า) + soraPrompt -> เจนภาพโฆษณา 9:16
  *
- * ✅ “ภาพ”: ให้ AI มองรูปสินค้า -> สรุปลักษณะสินค้า -> สร้างภาพโฆษณาแนวตั้ง 9:16
- * Response: { success:true, mime:"image/png", b64:"..." }
+ * Response:
+ *  { success:true, mime:"image/png", b64:"..." }
  */
 app.post(
   "/api/generate-image",
-  upload.fields([{ name:"img1", maxCount:1 }]),
+  upload.fields([{ name: "img1", maxCount: 1 }]),
   async (req, res) => {
-    try{
-      if(!process.env.OPENAI_API_KEY){
-        return res.status(500).json({ success:false, error:"Missing OPENAI_API_KEY" });
+    try {
+      if (!process.env.OPENAI_API_KEY) {
+        return res.status(500).json({ success: false, error: "Missing OPENAI_API_KEY" });
       }
 
       const soraPrompt = String(req.body?.soraPrompt || "").trim();
-      if(!soraPrompt){
-        return res.status(400).json({ success:false, error:"Missing soraPrompt" });
+      if (!soraPrompt) {
+        return res.status(400).json({ success: false, error: "Missing soraPrompt" });
       }
 
       const img1 = req.files?.img1?.[0] || null;
-      if(!img1){
-        return res.status(400).json({ success:false, error:"Missing img1 (product reference image)" });
+      if (!img1) {
+        return res.status(400).json({ success: false, error: "Missing img1 (product reference image)" });
       }
 
       const imgDataUrl = fileToDataUrl(img1);
 
-      // 1) Vision วิเคราะห์สินค้า
+      // 1) Vision: สรุปลักษณะสินค้าให้ “คงดีไซน์”
       const visionSystem = `
 You are an expert product visual analyst for advertising.
 Describe ONLY what you see in the product image so it can be recreated faithfully.
@@ -231,7 +252,7 @@ Return a compact bullet list:
 - main colors
 - materials / textures
 - patterns / prints (if any)
-- any important details that must remain consistent
+- important details that must remain consistent
 
 Write in English. No extra commentary.
       `.trim();
@@ -240,77 +261,87 @@ Write in English. No extra commentary.
         client.responses.create({
           model: "gpt-4.1-mini",
           input: [
-            { role:"system", content: visionSystem },
+            { role: "system", content: visionSystem },
             {
-              role:"user",
+              role: "user",
               content: [
-                { type:"input_text", text:"Analyze the product image for faithful recreation." },
-                { type:"input_image", image_url: imgDataUrl },
+                { type: "input_text", text: "Analyze the product image for faithful recreation." },
+                { type: "input_image", image_url: imgDataUrl }
               ]
             }
           ],
           temperature: 0.2,
-          max_output_tokens: 300,
+          max_output_tokens: 250,
         })
       );
 
       const productDesc = (visionResp.output_text || "").trim();
-      if(!productDesc){
-        return res.status(502).json({ success:false, error:"Vision analysis returned empty" });
+      if (!productDesc) {
+        return res.status(502).json({ success: false, error: "Vision analysis returned empty" });
       }
 
-      // 2) Prompt สำหรับสร้างภาพ 9:16
+      // 2) รวมคำสั่งของผู้ใช้ + กติกาโฆษณา + บังคับ 9:16
       const imagePrompt = `
 Create ONE high-quality vertical promotional image (9:16) suitable for TikTok.
 
 REFERENCE PRODUCT (must remain consistent):
 ${productDesc}
 
-USER INSTRUCTIONS (follow closely):
+STRICT PRODUCT RULES:
+- Keep the product EXACTLY the same as the reference: shape, colors, materials, textures, patterns, proportions.
+- Do NOT redesign, modify, enhance, or alter the product.
+
+SCENE & QUALITY:
+- Create a NEW premium environment (do not copy background from reference).
+- Cinematic premium lighting, high contrast, shallow depth of field.
+- Product occupies ~60–70% of the frame.
+- Clean commercial-grade background.
+
+TEXT RULES:
+- Thai only, formal correct spelling, no English characters.
+- If unsure spelling, replace text with a clean solid graphic bar instead.
+
+USER INSTRUCTIONS:
 ${soraPrompt}
 
-Composition:
-- vertical 9:16 ad composition
-- product is hero, ~60–70% of frame
-- clean premium background, cinematic lighting, shallow depth of field
-- remove any watermarks/logos/text from the reference; generate a new scene
-
-Text overlay rules:
-- Thai only, formal spelling, no English characters
-- if unsure spelling, use a clean solid graphic bar instead of text
-
-Output: single image, commercial-grade quality.
+Output: one single image, commercial-grade, TikTok-ready.
       `.trim();
 
-      // 3) Generate image (9:16)
-      // NOTE: หากบัญชีคุณยังไม่เปิดใช้งาน model ภาพ จะ error 400 ต้องเปิด Billing/Images access
+      // 3) Generate Image (9:16) — ✅ ตั้ง size ตรงนี้
       const imgResp = await callOpenAIWithRetry(() =>
         client.images.generate({
           model: "gpt-image-1",
           prompt: imagePrompt,
-          size: "1024x1792",
-          response_format: "b64_json",
+          size: "1024x1792",          // ✅ 9:16 แนวตั้ง
+          response_format: "b64_json" // ✅ ได้ base64 กลับมา
         })
       );
 
       const b64 = imgResp?.data?.[0]?.b64_json || null;
-      if(!b64){
-        return res.status(502).json({ success:false, error:"No base64 image returned from image model" });
+      if (!b64) {
+        return res.status(502).json({ success: false, error: "No base64 image returned from image model" });
       }
 
       return res.json({
         success: true,
         mime: "image/png",
         filename: "generated.png",
-        b64
+        b64,
+        meta: {
+          receivedImage: shortFileInfo(img1)
+        }
       });
 
-    }catch(err){
+    } catch (err) {
       console.error("generate-image error:", err);
+
       const status = err?.status || err?.response?.status || 500;
       let message = err?.message || "Server error";
-      if(status === 429) message = "OpenAI rate limit / quota reached (HTTP 429). Check billing/limits.";
-      return res.status(status).json({ success:false, error: message });
+      if (status === 429) {
+        message = "OpenAI rate limit / quota reached (HTTP 429). Please wait or check billing/usage limits.";
+      }
+
+      return res.status(status).json({ success: false, error: message });
     }
   }
 );
