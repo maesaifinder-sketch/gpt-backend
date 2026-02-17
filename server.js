@@ -154,7 +154,7 @@ ${soraPrompt}
         client.images.generate({
           model: "gpt-image-1",
           prompt: imagePrompt,
-          size: "1024x1792" // 9:16
+          size: "1024x1536" // 9:16
         })
       );
 
@@ -182,3 +182,4 @@ ${soraPrompt}
  * ========================= */
 const port = Number(process.env.PORT || 3000);
 app.listen(port, ()=> console.log(`✅ Backend running on ${port}`));
+
