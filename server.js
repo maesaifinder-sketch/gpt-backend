@@ -10,7 +10,14 @@ const app = express();
 /** ✅ CORS: อนุญาตทุก origin ก่อน (ง่ายสุด)
  *  ถ้าจะล็อกโดเมนทีหลัง ผมปรับให้ได้
  */
-app.use(cors());
+app.use(cors({
+  origin: [
+    "https://maesaifinder-sketch.github.io"
+  ],
+  methods: ["GET", "POST", "OPTIONS"],
+  allowedHeaders: ["Content-Type", "Authorization"]
+}));
+app.options("*", cors());
 app.use(express.json({ limit: "1mb" }));
 
 const client = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
@@ -74,3 +81,4 @@ ${soraPrompt}
 
 const port = Number(process.env.PORT || 3000);
 app.listen(port, () => console.log(`✅ Running on port ${port}`));
+
