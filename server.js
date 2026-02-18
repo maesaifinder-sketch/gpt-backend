@@ -1,7 +1,7 @@
 /**
  * server.js — All-in-one (GPT Prompt + Image Generation)
- * - POST /api/generate-gpt-prompt
- * - POST /api/generate-image
+ * - POST /api/generate-gpt-prompt  (fields: provider, soraPrompt, img1?, img2?)
+ * - POST /api/generate-image       (fields: provider, soraPrompt, img1)
  * - GET  /health
  *
  * npm i express cors multer openai
@@ -25,7 +25,7 @@ const ALLOWED_ORIGINS = [
 
 app.use(cors({
   origin(origin, cb){
-    if (!origin) return cb(null, true);
+    if (!origin) return cb(null, true); // allow curl/postman
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS blocked: ${origin}`));
   },
@@ -87,10 +87,14 @@ app.post(
         return res.status(500).json({ success:false, error:"Missing OPENAI_API_KEY" });
       }
 
+      const provider = String(req.body?.provider || "openai").trim(); // ✅ รับ provider
       const soraPrompt = String(req.body?.soraPrompt || "").trim();
       if(!soraPrompt){
         return res.status(400).json({ success:false, error:"Missing soraPrompt" });
       }
+
+      // ตอนนี้ยังใช้ OpenAI server key เป็นหลัก — แค่ log provider ไว้
+      console.log("🧩 /api/generate-gpt-prompt provider =", provider);
 
       const system = `
 You are an expert prompt engineer for Sora video generation.
@@ -134,13 +138,15 @@ app.post(
         return res.status(500).json({ success:false, error:"Missing OPENAI_API_KEY" });
       }
 
+      const provider = String(req.body?.provider || "openai").trim(); // ✅ รับ provider
       const soraPrompt = String(req.body?.soraPrompt || "").trim();
       const img1 = req.files?.img1?.[0] || null;
 
       if(!soraPrompt) return res.status(400).json({ success:false, error:"Missing soraPrompt" });
       if(!img1) return res.status(400).json({ success:false, error:"Missing img1" });
 
-      // รวม prompt สำหรับภาพโฆษณา
+      console.log("🖼 /api/generate-image provider =", provider);
+
       const imagePrompt = `
 Create a high-end vertical 9:16 commercial product image.
 Use the uploaded product image as reference for the product only.
@@ -154,7 +160,7 @@ ${soraPrompt}
         client.images.generate({
           model: "gpt-image-1",
           prompt: imagePrompt,
-          size: "1024x1536" // 9:16
+          size: "1024x1536"
         })
       );
 
@@ -163,11 +169,7 @@ ${soraPrompt}
         return res.status(502).json({ success:false, error:"Empty image result" });
       }
 
-      return res.json({
-        success: true,
-        mime: "image/png",
-        b64
-      });
+      return res.json({ success: true, mime: "image/png", b64 });
 
     }catch(err){
       console.error(err);
@@ -181,5 +183,4 @@ ${soraPrompt}
  * Start
  * ========================= */
 const port = Number(process.env.PORT || 3000);
-app.listen(port, ()=> console.log(`✅ Backend running on ${port}`));
-
+app.listen(port, ()=> console.log(\`✅ Backend running on \${port}\`));
