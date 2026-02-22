@@ -12,3 +12,17 @@
     "openai": "^4.28.0"
   }
 }
+
+{
+  "name": "script-pro-backend",
+  "type": "module",
+  "private": true,
+  "dependencies": {
+    "cors": "^2.8.5",
+    "express": "^4.19.2",
+    "node-fetch": "^3.3.2"
+  },
+  "scripts": {
+    "start": "node server2.js"
+  }
+}
