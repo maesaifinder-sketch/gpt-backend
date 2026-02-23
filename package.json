@@ -2,13 +2,13 @@
   "name": "gpt-backend",
   "version": "1.0.0",
   "type": "module",
-  "private": true,
   "scripts": {
-    "start": "node server2.js"
+    "start": "node server.js"
   },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.19.2",
-    "node-fetch": "^3.3.2"
+    "multer": "^1.4.5-lts.1",
+    "openai": "^4.28.0"
   }
 }
