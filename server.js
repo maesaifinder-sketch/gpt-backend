@@ -28,6 +28,10 @@ app.use(cors({
     if (!origin) return cb(null, true);
     if (ALLOWED_ORIGINS.includes(origin)) return cb(null, true);
     return cb(new Error(`CORS blocked: ${origin}`));
+
+// Parse JSON bodies (for /api/generate)
+app.use(express.json({ limit: '2mb' }));
+
   },
   methods: ["GET","POST","OPTIONS"],
   allowedHeaders: ["Content-Type","Authorization"],
@@ -177,10 +181,107 @@ ${soraPrompt}
   }
 );
 
+
+// =========================
+// Unified JSON generator for storyboard (used by History-Make / Prompt Builder)
+// POST /api/generate
+// Body: { provider: "openai"|"google"|"grok", model: string, system: string, user: string, temperature?: number }
+// Uses env vars: OPENAI_API_KEY, GOOGLE_API_KEY, XAI_API_KEY
+// =========================
+function stripCodeFences(s){
+  if(!s) return "";
+  return String(s)
+    .replace(/^```json\s*/i, "")
+    .replace(/^```\s*/i, "")
+    .replace(/```\s*$/i, "")
+    .trim();
+}
+
+app.post("/api/generate", async (req, res) => {
+  try{
+    const { provider="openai", model, system="", user="", temperature=0.7 } = req.body || {};
+    if(!user) return res.status(400).json({ error: "Missing 'user' prompt" });
+
+    let content = "";
+
+    if(provider === "openai"){
+      const apiKey = process.env.OPENAI_API_KEY;
+      if(!apiKey) return res.status(500).json({ error: "OPENAI_API_KEY is not set" });
+
+      const client = new OpenAI({ apiKey });
+      const resp = await client.chat.completions.create({
+        model: model || "gpt-4.1-mini",
+        temperature,
+        messages: [
+          { role: "system", content: system || "" },
+          { role: "user", content: user }
+        ]
+      });
+      content = resp?.choices?.[0]?.message?.content || "";
+
+    } else if(provider === "google"){
+      const apiKey = process.env.GOOGLE_API_KEY;
+      if(!apiKey) return res.status(500).json({ error: "GOOGLE_API_KEY is not set" });
+
+      const m = model || "gemini-1.5-flash";
+      const url = `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(m)}:generateContent?key=${encodeURIComponent(apiKey)}`;
+      const r = await fetch(url, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          contents: [{ role: "user", parts: [{ text: `${system}\n\n${user}` }] }],
+          generationConfig: { temperature }
+        })
+      });
+      const data = await r.json();
+      if(!r.ok) return res.status(500).json({ error: data?.error?.message || "Gemini error", raw: data });
+      content = data?.candidates?.[0]?.content?.parts?.map(p=>p.text||"").join("") || "";
+
+    } else if(provider === "grok"){
+      const apiKey = process.env.XAI_API_KEY;
+      if(!apiKey) return res.status(500).json({ error: "XAI_API_KEY is not set" });
+
+      const r = await fetch("https://api.x.ai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${apiKey}`
+        },
+        body: JSON.stringify({
+          model: model || "grok-2",
+          temperature,
+          messages: [
+            { role: "system", content: system || "" },
+            { role: "user", content: user }
+          ]
+        })
+      });
+      const data = await r.json();
+      if(!r.ok) return res.status(500).json({ error: data?.error?.message || "Grok error", raw: data });
+      content = data?.choices?.[0]?.message?.content || "";
+
+    } else {
+      return res.status(400).json({ error: "Unsupported provider: " + provider });
+    }
+
+    const cleaned = stripCodeFences(content);
+
+    // Try to parse JSON, but still return raw on failure
+    try{
+      const parsed = JSON.parse(cleaned);
+      return res.json(parsed);
+    }catch(_){
+      return res.json({ raw: cleaned });
+    }
+  }catch(err){
+    console.error("Error /api/generate:", err);
+    return res.status(500).json({ error: err?.message || String(err) });
+  }
+});
+
+
 /** =========================
  * Start
  * ========================= */
 const port = Number(process.env.PORT || 3000);
 app.listen(port, ()=> console.log(`✅ Backend running on ${port}`));
-
-
